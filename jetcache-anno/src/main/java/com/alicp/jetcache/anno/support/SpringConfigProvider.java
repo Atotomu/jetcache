@@ -1,7 +1,7 @@
 package com.alicp.jetcache.anno.support;
 
+import com.alicp.jetcache.CacheManager;
 import com.alicp.jetcache.anno.method.SpringCacheContext;
-import com.alicp.jetcache.support.CacheMessagePublisher;
 import com.alicp.jetcache.support.StatInfo;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,7 +30,7 @@ public class SpringConfigProvider extends ConfigProvider implements ApplicationC
     }
 
     @Override
-    public void doInit() {
+    protected void doInit() {
         if (encoderParser instanceof ApplicationContextAware) {
             ((ApplicationContextAware) encoderParser).setApplicationContext(applicationContext);
         }
@@ -41,14 +41,8 @@ public class SpringConfigProvider extends ConfigProvider implements ApplicationC
     }
 
     @Override
-    protected CacheContext newContext() {
-        return new SpringCacheContext(this, globalCacheConfig, applicationContext);
-    }
-
-    @Autowired(required = false)
-    @Override
-    public void setCacheManager(SimpleCacheManager cacheManager) {
-        super.setCacheManager(cacheManager);
+    public CacheContext newContext(CacheManager cacheManager) {
+        return new SpringCacheContext(cacheManager, this, globalCacheConfig, applicationContext);
     }
 
     @Autowired(required = false)
@@ -65,20 +59,8 @@ public class SpringConfigProvider extends ConfigProvider implements ApplicationC
 
     @Autowired(required = false)
     @Override
-    public void setCacheMonitorManager(CacheMonitorManager cacheMonitorManager) {
-        super.setCacheMonitorManager(cacheMonitorManager);
-    }
-
-    @Autowired(required = false)
-    @Override
     public void setMetricsCallback(Consumer<StatInfo> metricsCallback) {
         super.setMetricsCallback(metricsCallback);
-    }
-
-    @Autowired(required = false)
-    @Override
-    public void setCacheMessagePublisher(CacheMessagePublisher cacheMessagePublisher) {
-        super.setCacheMessagePublisher(cacheMessagePublisher);
     }
 
 }

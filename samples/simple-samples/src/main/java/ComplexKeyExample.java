@@ -1,6 +1,6 @@
 import com.alicp.jetcache.Cache;
 import com.alicp.jetcache.embedded.CaffeineCacheBuilder;
-import com.alicp.jetcache.support.FastjsonKeyConvertor;
+import com.alicp.jetcache.support.Fastjson2KeyConvertor;
 
 import java.util.concurrent.TimeUnit;
 
@@ -14,13 +14,14 @@ public class ComplexKeyExample {
         Cache<Object, Object> cache = CaffeineCacheBuilder.createCaffeineCacheBuilder()
                 .limit(100)
                 .expireAfterWrite(200, TimeUnit.SECONDS)
-                .keyConvertor(FastjsonKeyConvertor.INSTANCE)
+                .keyConvertor(Fastjson2KeyConvertor.INSTANCE)
                 .buildCache();
 
         DynamicQuery key = new DynamicQuery();
         key.setName("AAA");
         key.setEmail("BBB");
-        cache.get(key);
+        cache.put(key, "value");
+        System.out.println(cache.get(key));
     }
 
 

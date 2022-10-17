@@ -1,12 +1,12 @@
 import com.alicp.jetcache.Cache;
 import com.alicp.jetcache.MultiLevelCacheBuilder;
-import com.alicp.jetcache.embedded.CaffeineCache;
 import com.alicp.jetcache.embedded.CaffeineCacheBuilder;
-import com.alicp.jetcache.embedded.EmbeddedCacheConfig;
 import com.alicp.jetcache.redis.RedisCacheBuilder;
-import com.alicp.jetcache.support.FastjsonKeyConvertor;
-import com.alicp.jetcache.support.KryoValueDecoder;
-import com.alicp.jetcache.support.KryoValueEncoder;
+import com.alicp.jetcache.support.Fastjson2KeyConvertor;
+import com.alicp.jetcache.support.JavaValueDecoder;
+import com.alicp.jetcache.support.JavaValueEncoder;
+import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
+import redis.clients.jedis.JedisPool;
 
 import java.util.concurrent.TimeUnit;
 
@@ -20,15 +20,21 @@ public class MultiLevelCacheExample {
         Cache<Object, Object> l1Cache = CaffeineCacheBuilder.createCaffeineCacheBuilder()
                 .limit(100)
                 .expireAfterWrite(200, TimeUnit.SECONDS)
-                .keyConvertor(FastjsonKeyConvertor.INSTANCE)
-                .buildFunc(c -> new CaffeineCache((EmbeddedCacheConfig) c))
+                .keyConvertor(Fastjson2KeyConvertor.INSTANCE)
                 .buildCache();
+
+        GenericObjectPoolConfig pc = new GenericObjectPoolConfig();
+        pc.setMinIdle(2);
+        pc.setMaxIdle(10);
+        pc.setMaxTotal(10);
+        JedisPool pool = new JedisPool(pc, "127.0.0.1", 6379);
         Cache<Object, Object> l2Cache = RedisCacheBuilder.createRedisCacheBuilder()
-                .jedisPool(/*replace with your jedis pool*/null)
+                .jedisPool(pool)
+                .keyPrefix("projectD")
                 .expireAfterWrite(200, TimeUnit.SECONDS)
-                .keyConvertor(FastjsonKeyConvertor.INSTANCE)
-                .valueEncoder(KryoValueEncoder.INSTANCE)
-                .valueDecoder(KryoValueDecoder.INSTANCE)
+                .keyConvertor(Fastjson2KeyConvertor.INSTANCE)
+                .valueEncoder(JavaValueEncoder.INSTANCE)
+                .valueDecoder(JavaValueDecoder.INSTANCE)
                 .buildCache();
 
         Cache<Object, Object> multiLevelCache = MultiLevelCacheBuilder.createMultiLevelCacheBuilder()
@@ -37,7 +43,7 @@ public class MultiLevelCacheExample {
 
         multiLevelCache.put("K1", "V1");
         multiLevelCache.put("K2", "V2", 20, TimeUnit.SECONDS);
-        multiLevelCache.get("K1");
+        System.out.println(multiLevelCache.get("K1"));
         multiLevelCache.remove("K2");
 
     }

@@ -1,6 +1,13 @@
 package com.alicp.jetcache.redis.lettuce;
 
-import com.alicp.jetcache.*;
+import com.alicp.jetcache.CacheConfig;
+import com.alicp.jetcache.CacheConfigException;
+import com.alicp.jetcache.CacheGetResult;
+import com.alicp.jetcache.CacheResult;
+import com.alicp.jetcache.CacheResultCode;
+import com.alicp.jetcache.CacheValueHolder;
+import com.alicp.jetcache.MultiGetResult;
+import com.alicp.jetcache.ResultData;
 import com.alicp.jetcache.external.AbstractExternalCache;
 import com.alicp.jetcache.support.JetCacheExecutor;
 import io.lettuce.core.AbstractRedisClient;
@@ -15,7 +22,12 @@ import io.lettuce.core.cluster.api.reactive.RedisClusterReactiveCommands;
 import io.lettuce.core.cluster.api.sync.RedisClusterCommands;
 
 import java.time.Duration;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
@@ -28,16 +40,16 @@ import java.util.function.Function;
  */
 public class RedisLettuceCache<K, V> extends AbstractExternalCache<K, V> {
 
-    private RedisLettuceCacheConfig<K, V> config;
+    private final RedisLettuceCacheConfig<K, V> config;
 
-    private Function<Object, byte[]> valueEncoder;
-    private Function<byte[], Object> valueDecoder;
+    private final Function<Object, byte[]> valueEncoder;
+    private final Function<byte[], Object> valueDecoder;
 
     private final AbstractRedisClient client;
-    private LettuceConnectionManager lettuceConnectionManager;
-    private RedisStringCommands<byte[], byte[]> stringCommands;
-    private RedisStringAsyncCommands<byte[], byte[]> stringAsyncCommands;
-    private RedisKeyAsyncCommands<byte[], byte[]> keyAsyncCommands;
+    private final LettuceConnectionManager lettuceConnectionManager;
+    private final RedisStringCommands<byte[], byte[]> stringCommands;
+    private final RedisStringAsyncCommands<byte[], byte[]> stringAsyncCommands;
+    private final RedisKeyAsyncCommands<byte[], byte[]> keyAsyncCommands;
 
     public RedisLettuceCache(RedisLettuceCacheConfig<K, V> config) {
         super(config);
@@ -53,7 +65,7 @@ public class RedisLettuceCache<K, V> extends AbstractExternalCache<K, V> {
 
         client = config.getRedisClient();
 
-        lettuceConnectionManager = LettuceConnectionManager.defaultManager();
+        lettuceConnectionManager = config.getConnectionManager();
         lettuceConnectionManager.init(client, config.getConnection());
         stringCommands = (RedisStringCommands<byte[], byte[]>) lettuceConnectionManager.commands(client);
         stringAsyncCommands = (RedisStringAsyncCommands<byte[], byte[]>) lettuceConnectionManager.asyncCommands(client);
@@ -150,20 +162,25 @@ public class RedisLettuceCache<K, V> extends AbstractExternalCache<K, V> {
         try {
             byte[] newKey = buildKey(key);
             RedisFuture<byte[]> future = stringAsyncCommands.get(newKey);
-            CacheGetResult result = new CacheGetResult(future.handle((valueBytes, ex) -> {
+            CacheGetResult<V> result = new CacheGetResult<>(future.handle((valueBytes, ex) -> {
                 if (ex != null) {
                     JetCacheExecutor.defaultExecutor().execute(() -> logError("GET", key, ex));
                     return new ResultData(ex);
                 } else {
-                    if (valueBytes != null) {
-                        CacheValueHolder<V> holder = (CacheValueHolder<V>) valueDecoder.apply(valueBytes);
-                        if (System.currentTimeMillis() >= holder.getExpireTime()) {
-                            return new ResultData(CacheResultCode.EXPIRED, null, null);
+                    try {
+                        if (valueBytes != null) {
+                            CacheValueHolder<V> holder = (CacheValueHolder<V>) valueDecoder.apply(valueBytes);
+                            if (System.currentTimeMillis() >= holder.getExpireTime()) {
+                                return new ResultData(CacheResultCode.EXPIRED, null, null);
+                            } else {
+                                return new ResultData(CacheResultCode.SUCCESS, null, holder);
+                            }
                         } else {
-                            return new ResultData(CacheResultCode.SUCCESS, null, holder);
+                            return new ResultData(CacheResultCode.NOT_EXISTS, null, null);
                         }
-                    } else {
-                        return new ResultData(CacheResultCode.NOT_EXISTS, null, null);
+                    } catch (Exception exception) {
+                        logError("GET", key, ex);
+                        return new ResultData(ex);
                     }
                 }
             }));
@@ -186,27 +203,32 @@ public class RedisLettuceCache<K, V> extends AbstractExternalCache<K, V> {
                 return new MultiGetResult<K, V>(CacheResultCode.SUCCESS, null, resultMap);
             }
             RedisFuture<List<KeyValue<byte[],byte[]>>> mgetResults = stringAsyncCommands.mget(newKeys);
-            MultiGetResult result = new MultiGetResult<K, V>(mgetResults.handle((list, ex) -> {
+            MultiGetResult<K, V> result = new MultiGetResult<>(mgetResults.handle((list, ex) -> {
                 if (ex != null) {
                     JetCacheExecutor.defaultExecutor().execute(() -> logError("GET_ALL", "keys(" + keys.size() + ")", ex));
                     return new ResultData(ex);
                 } else {
-                    for (int i = 0; i < list.size(); i++) {
-                        KeyValue kv = list.get(i);
-                        K key = keyList.get(i);
-                        if (kv != null && kv.hasValue()) {
-                            CacheValueHolder<V> holder = (CacheValueHolder<V>) valueDecoder.apply((byte[]) kv.getValue());
-                            if (System.currentTimeMillis() >= holder.getExpireTime()) {
-                                resultMap.put(key, CacheGetResult.EXPIRED_WITHOUT_MSG);
+                    try {
+                        for (int i = 0; i < list.size(); i++) {
+                            KeyValue kv = list.get(i);
+                            K key = keyList.get(i);
+                            if (kv != null && kv.hasValue()) {
+                                CacheValueHolder<V> holder = (CacheValueHolder<V>) valueDecoder.apply((byte[]) kv.getValue());
+                                if (System.currentTimeMillis() >= holder.getExpireTime()) {
+                                    resultMap.put(key, CacheGetResult.EXPIRED_WITHOUT_MSG);
+                                } else {
+                                    CacheGetResult<V> r = new CacheGetResult<V>(CacheResultCode.SUCCESS, null, holder);
+                                    resultMap.put(key, r);
+                                }
                             } else {
-                                CacheGetResult<V> r = new CacheGetResult<V>(CacheResultCode.SUCCESS, null, holder);
-                                resultMap.put(key, r);
+                                resultMap.put(key, CacheGetResult.NOT_EXISTS_WITHOUT_MSG);
                             }
-                        } else {
-                            resultMap.put(key, CacheGetResult.NOT_EXISTS_WITHOUT_MSG);
                         }
+                        return new ResultData(CacheResultCode.SUCCESS, null, resultMap);
+                    } catch (Exception exception) {
+                        logError("GET_ALL", "keys(" + keys.size() + ")", ex);
+                        return new ResultData(ex);
                     }
-                    return new ResultData(CacheResultCode.SUCCESS, null, resultMap);
                 }
             }));
             setTimeout(result);

@@ -1,9 +1,15 @@
 package com.alicp.jetcache;
 
 import com.alicp.jetcache.embedded.AbstractEmbeddedCache;
-import com.alicp.jetcache.event.*;
+import com.alicp.jetcache.event.CacheEvent;
+import com.alicp.jetcache.event.CacheGetAllEvent;
+import com.alicp.jetcache.event.CacheGetEvent;
+import com.alicp.jetcache.event.CachePutAllEvent;
+import com.alicp.jetcache.event.CachePutEvent;
+import com.alicp.jetcache.event.CacheRemoveAllEvent;
+import com.alicp.jetcache.event.CacheRemoveEvent;
 import com.alicp.jetcache.external.AbstractExternalCache;
-import com.alicp.jetcache.support.FastjsonKeyConvertor;
+import com.alicp.jetcache.support.SquashedLogger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,7 +33,9 @@ public abstract class AbstractCache<K, V> implements Cache<K, V> {
 
     private static Logger logger = LoggerFactory.getLogger(AbstractCache.class);
 
-    private ConcurrentHashMap<Object, LoaderLock> loaderMap;
+    private volatile ConcurrentHashMap<Object, LoaderLock> loaderMap;
+
+    protected volatile boolean closed;
 
     ConcurrentHashMap<Object, LoaderLock> initOrGetLoaderMap() {
         if (loaderMap == null) {
@@ -41,37 +49,21 @@ public abstract class AbstractCache<K, V> implements Cache<K, V> {
     }
 
     protected void logError(String oper, Object key, Throwable e) {
-        StringBuilder sb = new StringBuilder(64);
+        StringBuilder sb = new StringBuilder(256);
         sb.append("jetcache(")
                 .append(this.getClass().getSimpleName()).append(") ")
                 .append(oper)
-                .append(" error. key=")
-                .append(FastjsonKeyConvertor.INSTANCE.apply(key))
-                .append(".");
-        if (needLogStackTrace(e)) {
-            logger.error(sb.toString(), e);
-        } else {
-            sb.append(' ');
-            while (e != null) {
-                sb.append(e.getClass().getName());
-                sb.append(':');
-                sb.append(e.getMessage());
-                e = e.getCause();
-                if (e != null) {
-                    sb.append("\ncause by ");
-                }
+                .append(" error.");
+        if (!(key instanceof byte[])) {
+            try {
+                sb.append(" key=[")
+                        .append(config().getKeyConvertor().apply((K) key))
+                        .append(']');
+            } catch (Exception ex) {
+                // ignore
             }
-            logger.error(sb.toString());
         }
-
-    }
-
-    protected boolean needLogStackTrace(Throwable e) {
-//        if (e instanceof CacheEncodeException) {
-//            return true;
-//        }
-//        return false;
-        return true;
+        SquashedLogger.getLogger(logger).error(sb, e);
     }
 
     public void notify(CacheEvent e) {
@@ -158,9 +150,9 @@ public abstract class AbstractCache<K, V> implements Cache<K, V> {
             Consumer<V> cacheUpdater = (loadedValue) -> {
                 if(needUpdate(loadedValue, cacheNullWhenLoaderReturnNull, newLoader)) {
                     if (timeUnit != null) {
-                        cache.PUT(key, loadedValue, expireAfterWrite, timeUnit);
+                        cache.PUT(key, loadedValue, expireAfterWrite, timeUnit).waitForResult();
                     } else {
-                        cache.put(key, loadedValue);
+                        cache.PUT(key, loadedValue).waitForResult();
                     }
                 }
             };
@@ -192,14 +184,21 @@ public abstract class AbstractCache<K, V> implements Cache<K, V> {
             });
             if (create[0] || ll.loaderThread == Thread.currentThread()) {
                 try {
-                    V loadedValue = newLoader.apply(key);
-                    ll.success = true;
-                    ll.value = loadedValue;
-                    cacheUpdater.accept(loadedValue);
-                    return loadedValue;
+                    CacheGetResult<V> getResult = abstractCache.GET(key);
+                    if (getResult.isSuccess()) {
+                        ll.success = true;
+                        ll.value = getResult.getValue();
+                        return getResult.getValue();
+                    } else {
+                        V loadedValue = newLoader.apply(key);
+                        ll.success = true;
+                        ll.value = loadedValue;
+                        cacheUpdater.accept(loadedValue);
+                        return loadedValue;
+                    }
                 } finally {
-                    ll.signal.countDown();
                     if (create[0]) {
+                        ll.signal.countDown();
                         loaderMap.remove(lockKey);
                     }
                 }
@@ -336,10 +335,19 @@ public abstract class AbstractCache<K, V> implements Cache<K, V> {
 
     protected abstract CacheResult do_PUT_IF_ABSENT(K key, V value, long expireAfterWrite, TimeUnit timeUnit);
 
+    @Override
+    public void close() {
+        this.closed = true;
+    }
+
+    public boolean isClosed() {
+        return this.closed;
+    }
+
     static class LoaderLock {
         CountDownLatch signal;
         Thread loaderThread;
-        boolean success;
-        Object value;
+        volatile boolean success;
+        volatile Object value;
     }
 }

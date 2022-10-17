@@ -3,7 +3,7 @@
     <parent>
         <artifactId>jetcache-parent</artifactId>
         <groupId>com.alicp.jetcache</groupId>
-        <version>2.6.0.M4-SNAPSHOT</version>
+        <version>2.7.1-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -22,14 +22,29 @@
             <artifactId>slf4j-api</artifactId>
         </dependency>
 
-
         <dependency>
             <groupId>com.alibaba</groupId>
             <artifactId>fastjson</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>com.alibaba.fastjson2</groupId>
+            <artifactId>fastjson2</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>com.esotericsoftware</groupId>
             <artifactId>kryo</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>com.esotericsoftware.kryo</groupId>
+            <artifactId>kryo5</artifactId>
+            <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>

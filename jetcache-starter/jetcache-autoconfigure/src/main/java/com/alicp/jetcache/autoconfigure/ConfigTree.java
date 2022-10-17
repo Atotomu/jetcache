@@ -6,7 +6,6 @@ import org.springframework.core.env.PropertySource;
 import org.springframework.util.Assert;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -56,14 +55,38 @@ public class ConfigTree {
         return environment.containsProperty(key);
     }
 
-    public <T> T getProperty(String key) {
+    public String getProperty(String key) {
         key = fullPrefixOrKey(key);
-        return (T) environment.getProperty(key);
+        return environment.getProperty(key);
     }
 
-    public <T> T getProperty(String key, T defaultValue) {
+    public String getProperty(String key, String defaultValue) {
         if (containsProperty(key)) {
             return getProperty(key);
+        } else {
+            return defaultValue;
+        }
+    }
+
+    public boolean getProperty(String key, boolean defaultValue) {
+        if (containsProperty(key)) {
+            return Boolean.parseBoolean(getProperty(key));
+        } else {
+            return defaultValue;
+        }
+    }
+
+    public int getProperty(String key, int defaultValue) {
+        if (containsProperty(key)) {
+            return Integer.parseInt(getProperty(key));
+        } else {
+            return defaultValue;
+        }
+    }
+
+    public long getProperty(String key, long defaultValue) {
+        if (containsProperty(key)) {
+            return Long.parseLong(getProperty(key));
         } else {
             return defaultValue;
         }

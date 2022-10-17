@@ -1,9 +1,12 @@
 package com.alicp.jetcache.redis;
 
+import com.alicp.jetcache.CacheConfig;
+import com.alicp.jetcache.CacheManager;
 import com.alicp.jetcache.external.ExternalCacheBuilder;
+import com.alicp.jetcache.support.BroadcastManager;
 import redis.clients.jedis.Jedis;
-import redis.clients.jedis.JedisPool;
-import redis.clients.util.Pool;
+import redis.clients.jedis.UnifiedJedis;
+import redis.clients.jedis.util.Pool;
 
 /**
  * Created on 2016/10/7.
@@ -30,6 +33,17 @@ public class RedisCacheBuilder<T extends ExternalCacheBuilder<T>> extends Extern
         return (RedisCacheConfig) config;
     }
 
+    @Override
+    public boolean supportBroadcast() {
+        return true;
+    }
+
+    @Override
+    public BroadcastManager createBroadcastManager(CacheManager cacheManager) {
+        CacheConfig c = getConfig().clone();
+        return new RedisBroadcastManager(cacheManager, (RedisCacheConfig) c);
+    }
+
     public T jedisPool(Pool<Jedis> pool) {
         getConfig().setJedisPool(pool);
         return self();
@@ -37,6 +51,15 @@ public class RedisCacheBuilder<T extends ExternalCacheBuilder<T>> extends Extern
 
     public void setJedisPool(Pool<Jedis> jedisPool) {
         getConfig().setJedisPool(jedisPool);
+    }
+
+    public T jedis(UnifiedJedis jedis) {
+        getConfig().setJedis(jedis);
+        return self();
+    }
+
+    public void setJedis(UnifiedJedis jedis) {
+        getConfig().setJedis(jedis);
     }
 
     public T readFromSlave(boolean readFromSlave) {
@@ -55,6 +78,15 @@ public class RedisCacheBuilder<T extends ExternalCacheBuilder<T>> extends Extern
 
     public void setJedisSlavePools(Pool<Jedis>... jedisSlavePools) {
         getConfig().setJedisSlavePools(jedisSlavePools);
+    }
+
+    public T slaves(UnifiedJedis... slaves) {
+        getConfig().setSlaves(slaves);
+        return self();
+    }
+
+    public void setSlaves(UnifiedJedis... slaves) {
+        getConfig().setSlaves(slaves);
     }
 
     public T slaveReadWeights(int... slaveReadWeights) {

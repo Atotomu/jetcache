@@ -5,18 +5,15 @@ package com.alicp.jetcache.anno.support;
 
 import com.alicp.jetcache.Cache;
 import com.alicp.jetcache.CacheConfigException;
-import com.alicp.jetcache.MultiLevelCacheBuilder;
+import com.alicp.jetcache.CacheManager;
 import com.alicp.jetcache.anno.CacheConsts;
-import com.alicp.jetcache.anno.CacheType;
 import com.alicp.jetcache.anno.EnableCache;
-import com.alicp.jetcache.anno.method.CacheHandler;
-import com.alicp.jetcache.anno.method.CacheInvokeConfig;
 import com.alicp.jetcache.anno.method.CacheInvokeContext;
-import com.alicp.jetcache.embedded.EmbeddedCacheBuilder;
-import com.alicp.jetcache.external.ExternalCacheBuilder;
+import com.alicp.jetcache.template.QuickConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
@@ -36,39 +33,44 @@ public class CacheContext {
 
     private ConfigProvider configProvider;
     private GlobalCacheConfig globalCacheConfig;
+    private CacheManager cacheManager;
 
-    protected SimpleCacheManager cacheManager;
-
-    public CacheContext(ConfigProvider configProvider, GlobalCacheConfig globalCacheConfig) {
+    public CacheContext(CacheManager cacheManager, ConfigProvider configProvider, GlobalCacheConfig globalCacheConfig) {
+        this.cacheManager = cacheManager;
         this.globalCacheConfig = globalCacheConfig;
         this.configProvider = configProvider;
-        cacheManager = configProvider.getCacheManager();
     }
 
     public CacheInvokeContext createCacheInvokeContext(ConfigMap configMap) {
         CacheInvokeContext c = newCacheInvokeContext();
-        c.setCacheFunction((invokeContext, cacheAnnoConfig) -> {
-            Cache cache = cacheAnnoConfig.getCache();
-            if (cache == null) {
-                if (cacheAnnoConfig instanceof CachedAnnoConfig) {
-                    cache = createCacheByCachedConfig((CachedAnnoConfig) cacheAnnoConfig, invokeContext);
-                } else if ((cacheAnnoConfig instanceof CacheInvalidateAnnoConfig) || (cacheAnnoConfig instanceof CacheUpdateAnnoConfig)) {
-                    CacheInvokeConfig cacheDefineConfig = configMap.getByCacheName(cacheAnnoConfig.getArea(), cacheAnnoConfig.getName());
-                    if (cacheDefineConfig == null) {
-                        String message = "can't find @Cached definition with area=" + cacheAnnoConfig.getArea()
-                                + " name=" + cacheAnnoConfig.getName() +
-                                ", specified in " + cacheAnnoConfig.getDefineMethod();
-                        CacheConfigException e = new CacheConfigException(message);
-                        logger.error("Cache operation aborted because can't find @Cached definition", e);
-                        return null;
-                    }
-                    cache = createCacheByCachedConfig(cacheDefineConfig.getCachedAnnoConfig(), invokeContext);
-                }
-                cacheAnnoConfig.setCache(cache);
-            }
-            return cache;
-        });
+        c.setCacheFunction((cic, cac) -> createOrGetCache(cic, cac, configMap));
         return c;
+    }
+
+    private Cache createOrGetCache(CacheInvokeContext invokeContext, CacheAnnoConfig cacheAnnoConfig, ConfigMap configMap) {
+        Cache cache = cacheAnnoConfig.getCache();
+        if (cache != null) {
+            return cache;
+        }
+        if (cacheAnnoConfig instanceof CachedAnnoConfig) {
+            cache = createCacheByCachedConfig((CachedAnnoConfig) cacheAnnoConfig, invokeContext);
+        } else if ((cacheAnnoConfig instanceof CacheInvalidateAnnoConfig) || (cacheAnnoConfig instanceof CacheUpdateAnnoConfig)) {
+            cache = cacheManager.getCache(cacheAnnoConfig.getArea(), cacheAnnoConfig.getName());
+            if (cache == null) {
+                CachedAnnoConfig cac = configMap.getByCacheName(cacheAnnoConfig.getArea(), cacheAnnoConfig.getName());
+                if (cac == null) {
+                    String message = "can't find cache definition with area=" + cacheAnnoConfig.getArea()
+                            + " name=" + cacheAnnoConfig.getName() +
+                            ", specified in " + cacheAnnoConfig.getDefineMethod();
+                    CacheConfigException e = new CacheConfigException(message);
+                    logger.error("Cache operation aborted because can't find cached definition", e);
+                    return null;
+                }
+                cache = createCacheByCachedConfig(cac, invokeContext);
+            }
+        }
+        cacheAnnoConfig.setCache(cache);
+        return cache;
     }
 
     private Cache createCacheByCachedConfig(CachedAnnoConfig ac, CacheInvokeContext invokeContext) {
@@ -83,120 +85,36 @@ public class CacheContext {
         return cache;
     }
 
-    @Deprecated
-    public <K, V> Cache<K, V> getCache(String cacheName) {
-        return getCache(CacheConsts.DEFAULT_AREA, cacheName);
-    }
-
-    @Deprecated
-    public <K, V> Cache<K, V> getCache(String area, String cacheName) {
-        Cache cache = cacheManager.getCacheWithoutCreate(area, cacheName);
-        return cache;
-    }
-
-    public Cache __createOrGetCache(CachedAnnoConfig cachedAnnoConfig, String area, String cacheName) {
-        String fullCacheName = area + "_" + cacheName;
-        Cache cache = cacheManager.getCacheWithoutCreate(area, cacheName);
-        if (cache == null) {
-            synchronized (this) {
-                cache = cacheManager.getCacheWithoutCreate(area, cacheName);
-                if (cache == null) {
-                    if (globalCacheConfig.isAreaInCacheName()) {
-                        // for compatible reason, if we use default configuration, the prefix should same to that version <=2.4.3
-                        cache = buildCache(cachedAnnoConfig, area, fullCacheName);
-                    } else {
-                        cache = buildCache(cachedAnnoConfig, area, cacheName);
-                    }
-                    cacheManager.putCache(area, cacheName, cache);
-                }
-            }
+    public Cache __createOrGetCache(CachedAnnoConfig cac, String area, String cacheName) {
+        QuickConfig.Builder b = QuickConfig.newBuilder(area, cacheName);
+        TimeUnit timeUnit = cac.getTimeUnit();
+        if (cac.getExpire() > 0) {
+            b.expire(Duration.ofMillis(timeUnit.toMillis(cac.getExpire())));
         }
-        return cache;
-    }
-
-    protected Cache buildCache(CachedAnnoConfig cachedAnnoConfig, String area, String cacheName) {
-        Cache cache;
-        if (cachedAnnoConfig.getCacheType() == CacheType.LOCAL) {
-            cache = buildLocal(cachedAnnoConfig, area);
-        } else if (cachedAnnoConfig.getCacheType() == CacheType.REMOTE) {
-            cache = buildRemote(cachedAnnoConfig, area, cacheName);
-        } else {
-            Cache local = buildLocal(cachedAnnoConfig, area);
-            Cache remote = buildRemote(cachedAnnoConfig, area, cacheName);
-
-            boolean useExpireOfSubCache = cachedAnnoConfig.getLocalExpire() > 0;
-            cache = MultiLevelCacheBuilder.createMultiLevelCacheBuilder()
-                    .expireAfterWrite(remote.config().getExpireAfterWriteInMillis(), TimeUnit.MILLISECONDS)
-                    .addCache(local, remote)
-                    .useExpireOfSubCache(useExpireOfSubCache)
-                    .cacheNullValue(cachedAnnoConfig.isCacheNullValue())
-                    .buildCache();
+        if (cac.getLocalExpire() > 0) {
+            b.localExpire(Duration.ofMillis(timeUnit.toMillis(cac.getLocalExpire())));
         }
-        cache.config().setRefreshPolicy(cachedAnnoConfig.getRefreshPolicy());
-        cache = new CacheHandler.CacheHandlerRefreshCache(cache);
-
-        cache.config().setCachePenetrationProtect(globalCacheConfig.isPenetrationProtect());
-        PenetrationProtectConfig protectConfig = cachedAnnoConfig.getPenetrationProtectConfig();
-        if (protectConfig != null) {
-            cache.config().setCachePenetrationProtect(protectConfig.isPenetrationProtect());
-            cache.config().setPenetrationProtectTimeout(protectConfig.getPenetrationProtectTimeout());
+        if (cac.getLocalLimit() > 0) {
+            b.localLimit(cac.getLocalLimit());
         }
-
-        if (configProvider.getCacheMonitorManager() != null) {
-            configProvider.getCacheMonitorManager().addMonitors(area, cacheName, cache);
+        b.cacheType(cac.getCacheType());
+        b.syncLocal(cac.isSyncLocal());
+        if (!CacheConsts.isUndefined(cac.getKeyConvertor())) {
+            b.keyConvertor(configProvider.parseKeyConvertor(cac.getKeyConvertor()));
         }
-        return cache;
-    }
-
-    protected Cache buildRemote(CachedAnnoConfig cachedAnnoConfig, String area, String cacheName) {
-        ExternalCacheBuilder cacheBuilder = (ExternalCacheBuilder) globalCacheConfig.getRemoteCacheBuilders().get(area);
-        if (cacheBuilder == null) {
-            throw new CacheConfigException("no remote cache builder: " + area);
+        if (!CacheConsts.isUndefined(cac.getSerialPolicy())) {
+            b.valueEncoder(configProvider.parseValueEncoder(cac.getSerialPolicy()));
+            b.valueDecoder(configProvider.parseValueDecoder(cac.getSerialPolicy()));
         }
-        cacheBuilder = (ExternalCacheBuilder) cacheBuilder.clone();
-
-        if (cachedAnnoConfig.getExpire() > 0 ) {
-            cacheBuilder.expireAfterWrite(cachedAnnoConfig.getExpire(), cachedAnnoConfig.getTimeUnit());
+        b.cacheNullValue(cac.isCacheNullValue());
+        b.useAreaInPrefix(globalCacheConfig.isAreaInCacheName());
+        PenetrationProtectConfig ppc = cac.getPenetrationProtectConfig();
+        if (ppc != null) {
+            b.penetrationProtect(ppc.isPenetrationProtect());
+            b.penetrationProtectTimeout(ppc.getPenetrationProtectTimeout());
         }
-
-        if (cacheBuilder.getConfig().getKeyPrefix() != null) {
-            cacheBuilder.setKeyPrefix(cacheBuilder.getConfig().getKeyPrefix() + cacheName);
-        } else {
-            cacheBuilder.setKeyPrefix(cacheName);
-        }
-
-        if (!CacheConsts.isUndefined(cachedAnnoConfig.getKeyConvertor())) {
-            cacheBuilder.setKeyConvertor(configProvider.parseKeyConvertor(cachedAnnoConfig.getKeyConvertor()));
-        }
-        if (!CacheConsts.isUndefined(cachedAnnoConfig.getSerialPolicy())) {
-            cacheBuilder.setValueEncoder(configProvider.parseValueEncoder(cachedAnnoConfig.getSerialPolicy()));
-            cacheBuilder.setValueDecoder(configProvider.parseValueDecoder(cachedAnnoConfig.getSerialPolicy()));
-        }
-        cacheBuilder.setCacheNullValue(cachedAnnoConfig.isCacheNullValue());
-        return cacheBuilder.buildCache();
-    }
-
-    protected Cache buildLocal(CachedAnnoConfig cachedAnnoConfig, String area) {
-        EmbeddedCacheBuilder cacheBuilder = (EmbeddedCacheBuilder) globalCacheConfig.getLocalCacheBuilders().get(area);
-        if (cacheBuilder == null) {
-            throw new CacheConfigException("no local cache builder: " + area);
-        }
-        cacheBuilder = (EmbeddedCacheBuilder) cacheBuilder.clone();
-
-        if (cachedAnnoConfig.getLocalLimit() != CacheConsts.UNDEFINED_INT) {
-            cacheBuilder.setLimit(cachedAnnoConfig.getLocalLimit());
-        }
-        if (cachedAnnoConfig.getCacheType() == CacheType.BOTH &&
-                cachedAnnoConfig.getLocalExpire() > 0) {
-            cacheBuilder.expireAfterWrite(cachedAnnoConfig.getLocalExpire(), cachedAnnoConfig.getTimeUnit());
-        } else if (cachedAnnoConfig.getExpire() > 0) {
-            cacheBuilder.expireAfterWrite(cachedAnnoConfig.getExpire(), cachedAnnoConfig.getTimeUnit());
-        }
-        if (!CacheConsts.isUndefined(cachedAnnoConfig.getKeyConvertor())) {
-            cacheBuilder.setKeyConvertor(configProvider.parseKeyConvertor(cachedAnnoConfig.getKeyConvertor()));
-        }
-        cacheBuilder.setCacheNullValue(cachedAnnoConfig.isCacheNullValue());
-        return cacheBuilder.buildCache();
+        b.refreshPolicy(cac.getRefreshPolicy());
+        return cacheManager.getOrCreateCache(b.build());
     }
 
     protected CacheInvokeContext newCacheInvokeContext() {

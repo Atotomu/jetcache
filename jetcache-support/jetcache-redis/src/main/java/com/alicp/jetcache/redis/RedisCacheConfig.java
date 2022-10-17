@@ -2,7 +2,8 @@ package com.alicp.jetcache.redis;
 
 import com.alicp.jetcache.external.ExternalCacheConfig;
 import redis.clients.jedis.Jedis;
-import redis.clients.util.Pool;
+import redis.clients.jedis.UnifiedJedis;
+import redis.clients.jedis.util.Pool;
 
 /**
  * Created on 2016/10/7.
@@ -13,6 +14,8 @@ public class RedisCacheConfig<K, V> extends ExternalCacheConfig<K, V> {
 
     private Pool<Jedis> jedisPool;
     private Pool<Jedis>[] jedisSlavePools;
+    private UnifiedJedis jedis;
+    private UnifiedJedis[] slaves;
     private boolean readFromSlave;
     private int[] slaveReadWeights;
 
@@ -30,6 +33,22 @@ public class RedisCacheConfig<K, V> extends ExternalCacheConfig<K, V> {
 
     public void setJedisSlavePools(Pool<Jedis>... jedisSlavePools) {
         this.jedisSlavePools = jedisSlavePools;
+    }
+
+    public UnifiedJedis getJedis() {
+        return jedis;
+    }
+
+    public void setJedis(UnifiedJedis jedis) {
+        this.jedis = jedis;
+    }
+
+    public UnifiedJedis[] getSlaves() {
+        return slaves;
+    }
+
+    public void setSlaves(UnifiedJedis[] slaves) {
+        this.slaves = slaves;
     }
 
     public boolean isReadFromSlave() {

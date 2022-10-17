@@ -3,8 +3,16 @@
  */
 package com.alicp.jetcache.anno.method;
 
-import com.alicp.jetcache.*;
-import com.alicp.jetcache.anno.support.*;
+import com.alicp.jetcache.AbstractCache;
+import com.alicp.jetcache.Cache;
+import com.alicp.jetcache.CacheInvokeException;
+import com.alicp.jetcache.CacheLoader;
+import com.alicp.jetcache.ProxyCache;
+import com.alicp.jetcache.anno.support.CacheContext;
+import com.alicp.jetcache.anno.support.CacheInvalidateAnnoConfig;
+import com.alicp.jetcache.anno.support.CacheUpdateAnnoConfig;
+import com.alicp.jetcache.anno.support.CachedAnnoConfig;
+import com.alicp.jetcache.anno.support.ConfigMap;
 import com.alicp.jetcache.event.CacheLoadEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,7 +20,13 @@ import org.slf4j.LoggerFactory;
 import java.lang.reflect.Array;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /**
@@ -29,7 +43,7 @@ public class CacheHandler implements InvocationHandler {
     private static class CacheContextSupport extends CacheContext {
 
         public CacheContextSupport() {
-            super(null, null);
+            super(null, null, null);
         }
 
         static void _enable() {
@@ -91,7 +105,7 @@ public class CacheHandler implements InvocationHandler {
         CachedAnnoConfig cachedConfig = cic.getCachedAnnoConfig();
         if (cachedConfig != null && (cachedConfig.isEnabled() || CacheContextSupport._isEnabled())) {
             return invokeWithCached(context);
-        } else if (cic.getInvalidateAnnoConfig() != null || cic.getUpdateAnnoConfig() != null) {
+        } else if (cic.getInvalidateAnnoConfigs() != null || cic.getUpdateAnnoConfig() != null) {
             return invokeWithInvalidateOrUpdate(context);
         } else {
             return invokeOrigin(context);
@@ -103,10 +117,9 @@ public class CacheHandler implements InvocationHandler {
         context.setResult(originResult);
         CacheInvokeConfig cic = context.getCacheInvokeConfig();
 
-        if (cic.getInvalidateAnnoConfig() != null) {
-            doInvalidate(context, cic);
+        if (cic.getInvalidateAnnoConfigs() != null) {
+            doInvalidate(context, cic.getInvalidateAnnoConfigs());
         }
-
         CacheUpdateAnnoConfig updateAnnoConfig = cic.getUpdateAnnoConfig();
         if (updateAnnoConfig != null) {
             doUpdate(context, updateAnnoConfig);
@@ -117,7 +130,7 @@ public class CacheHandler implements InvocationHandler {
 
     private static Iterable toIterable(Object obj) {
         if (obj.getClass().isArray()) {
-            if(obj instanceof Object[]) {
+            if (obj instanceof Object[]) {
                 return Arrays.asList((Object[]) obj);
             } else {
                 List list = new ArrayList();
@@ -134,8 +147,13 @@ public class CacheHandler implements InvocationHandler {
         }
     }
 
-    private static void doInvalidate(CacheInvokeContext context, CacheInvokeConfig cic) {
-        CacheInvalidateAnnoConfig annoConfig = cic.getInvalidateAnnoConfig();
+    private static void doInvalidate(CacheInvokeContext context, List<CacheInvalidateAnnoConfig> annoConfig) {
+        for (CacheInvalidateAnnoConfig config : annoConfig) {
+            doInvalidate(context, config);
+        }
+    }
+
+    private static void doInvalidate(CacheInvokeContext context, CacheInvalidateAnnoConfig annoConfig) {
         Cache cache = context.getCacheFunction().apply(context, annoConfig);
         if (cache == null) {
             return;
@@ -186,7 +204,7 @@ public class CacheHandler implements InvocationHandler {
                 logger.error("jetcache @CacheUpdate key is not instance of Iterable or array: " + updateAnnoConfig.getDefineMethod());
                 return;
             }
-            if(valueIt == null) {
+            if (valueIt == null) {
                 logger.error("jetcache @CacheUpdate value is not instance of Iterable or array: " + updateAnnoConfig.getDefineMethod());
                 return;
             }
@@ -273,18 +291,5 @@ public class CacheHandler implements InvocationHandler {
     private static Object invokeOrigin(CacheInvokeContext context) throws Throwable {
         return context.getInvoker().invoke();
     }
-
-    public static class CacheHandlerRefreshCache<K, V> extends RefreshCache<K, V> {
-
-        public CacheHandlerRefreshCache(Cache cache) {
-            super(cache);
-        }
-
-        @Override
-        public void addOrUpdateRefreshTask(K key, CacheLoader<K, V> loader) {
-            super.addOrUpdateRefreshTask(key, loader);
-        }
-    }
-
 
 }
